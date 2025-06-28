@@ -44,12 +44,12 @@ clean:
 	rm -f $(ODIR)/*.o *~ core $(INCDIR)/*~
 
 plots:
-	python plot_attitude.py &
-#	python plot_position.py &
-	python plot_states.py &
-#	python plot_velocity.py &
-#	python plot_flow.py &
-	python plot_glitchOffset.py &
+	python3 plot_attitude.py &
+#	python3 plot_position.py &
+	python3 plot_states.py &
+#	python3 plot_velocity.py &
+#	python3 plot_flow.py &
+	python3 plot_glitchOffset.py &
 
 tests:
 	make clean
