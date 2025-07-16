@@ -1,6 +1,18 @@
 #include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <MS5611.h>
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+#include <utility/imumaths.h>
 #include "estimator_22states.h"
 
+// IMU
+Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
+// Barometer
+MS5611 ms5611(0x77);
+// GPS
+SFE_UBLOX_GNSS myGNSS;
 // Global EKF instance
 AttPosEKF* ekf;
 
@@ -34,6 +46,7 @@ uint32_t maxBaroTime = 0;
 
 void setup() {
     Serial.begin(115200);
+    while (!Serial) delay(10);
     
     // Create EKF instance
     ekf = new AttPosEKF();
@@ -45,31 +58,70 @@ void setup() {
     // initBaro();
     
     Serial.println("EKF initialized");
+
+    // Initialize IMU
+    Wire.begin();
+    Wire.setClock(400000);
+
+    if (!bno.begin()) {
+        Serial.println("Could not find a valid BNO055 sensor, check wiring!");
+        while (1) {
+            delay(1000);
+            Serial.println("BNO055 init failed - retrying...");
+        }
+    }
+
+    delay(1000);
+    bno.setExtCrystalUse(true);
+
+    Serial.println("BNO055 initialized successfully");
+
+    // Initialize MS5611
+    if (ms5611.begin() == true) {
+        Serial.println("MS5611 found");
+        Serial.print("MS5611 PROM lib version: ");
+        Serial.println(MS5611_LIB_VERSION);
+    } else {
+        Serial.println("MS5611 not found. halt.");
+        while (1);
+    }
+
+    if (myGNSS.begin() == false) {
+        Serial.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
+        while (1);
+    }
+
+    myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
+    myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT); // Save (only) the communications port settings to flash and BBR
+    
+    Serial.println("u-blox GNSS initialized successfully");
+
 }
 
 
 void updateIMU() {
     uint32_t startTime = micros();
+
+    sensors_event_t orientationData, angVelData, linearAccelData;
+    bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
+    bno.getEvent(&angVelData, Adafruit_BNO055::VECTOR_GYROSCOPE);
+    bno.getEvent(&linearAccelData, Adafruit_BNO055::VECTOR_LINEARACCEL);
     
     // Read IMU data from your sensor
     float gx, gy, gz;  // rad/s
     float ax, ay, az;  // m/s^2
-    
-    // TODO: Read from your IMU sensor
-    // gx = readGyroX();
-    // gy = readGyroY();
-    // gz = readGyroZ();
-    // ax = readAccelX();
-    // ay = readAccelY();
-    // az = readAccelZ();
-    
+
     // For now, using dummy data
-    gx = 0.0f;
-    gy = 0.0f;
-    gz = 0.0f;
-    ax = 0.0f;
-    ay = 0.0f;
-    az = -9.81f;
+    gx = angVelData.gyro.x;      // rad/s
+    gy = angVelData.gyro.y;      // rad/s  
+    gz = angVelData.gyro.z;      // rad/s
+    ax = linearAccelData.acceleration.x;  // m/s^2
+    ay = linearAccelData.acceleration.y;  // m/s^2
+    az = linearAccelData.acceleration.z;  // m/s^2
+
+    //Serial.print("IMU Data: ");
+    //Serial.print("Gyro (rad/s): "); Serial.print(gx); Serial.print(", "); Serial.print(gy); Serial.print(", "); Serial.println(gz);
+    //Serial.print("Accel (m/s^2): "); Serial.print(ax); Serial.print(", "); Serial.print(ay); Serial.print(", "); Serial.println(az);
     
     // Calculate dt
     static uint32_t lastIMUUpdate = 0;
@@ -131,30 +183,34 @@ void updateGPS() {
     uint32_t startTime = micros();
     
     // Check if GPS data is available
-    // if (!gpsAvailable()) return;
+    if (myGNSS.getPVT() == false) {
+        // No new data available
+        return;
+    }
     
     // Read GPS data
     float lat, lon, alt;     // degrees, degrees, meters
     float velN, velE, velD;  // m/s
-    uint8_t fixType;         // 0=no fix, 3=3D fix
+    uint8_t fixType, numSats;         // 0=no fix, 3=3D fix
     
-    // TODO: Read from your GPS
-    // lat = readGPSLat();
-    // lon = readGPSLon();
-    // alt = readGPSAlt();
-    // velN = readGPSVelN();
-    // velE = readGPSVelE();
-    // velD = readGPSVelD();
-    // fixType = readGPSFixType();
-    
-    // For now, dummy data
-    lat = 37.7749f;
-    lon = -122.4194f;
-    alt = 100.0f;
-    velN = 0.0f;
-    velE = 0.0f;
-    velD = 0.0f;
-    fixType = 3;
+    lat = myGNSS.getLatitude() * 1e-7;
+    lon = myGNSS.getLongitude() * 1e-7;
+    alt = myGNSS.getAltitude() * 1e-3;
+    velN = myGNSS.getNedNorthVel() * 1e-3;
+    velE = myGNSS.getNedEastVel() * 1e-3;
+    velD = myGNSS.getNedDownVel() * 1e-3;
+    fixType = myGNSS.getFixType();
+    numSats = myGNSS.getSIV();
+
+    //Serial.print("GPS Data: ");
+    //Serial.print("Lat: "); Serial.print(lat, 6); Serial.print(", ");
+    //Serial.print("Lon: "); Serial.print(lon, 6); Serial.print(", ");
+    //Serial.print("Alt: "); Serial.print(alt, 2); Serial.print(" m, ");
+    //Serial.print("VelN: "); Serial.print(velN, 2); Serial.print(" m/s, ");
+    //Serial.print("VelE: "); Serial.print(velE, 2); Serial.print(" m/s, ");
+    //Serial.print("VelD: "); Serial.print(velD, 2); Serial.print(" m/s, ");
+    //Serial.print("FixType: "); Serial.print(fixType); Serial.print(", ");
+    //Serial.print("NumSats: "); Serial.println(numSats);
     
     if (fixType >= 3) {
         // Convert to radians
@@ -262,13 +318,25 @@ void updateBaro() {
     uint32_t startTime = micros();
     
     // Read barometer data
-    float baroAlt;  // meters
     
     // TODO: Read from your barometer
     // baroAlt = readBaroAltitude();
+    int result = ms5611.read();
     
-    // For now, dummy data
-    baroAlt = 100.0f;
+    if (result != MS5611_READ_OK) {
+        Serial.print("MS5611 read error: ");
+        Serial.println(result);
+        return;
+    }
+
+    float temperature = ms5611.getTemperature();
+    float pressure = ms5611.getPressure();
+    float baroAlt = 44330.0 * (1.0 - pow(pressure / 101325.0, 0.1903));
+
+    //Serial.print("Barometer Data: ");
+    //Serial.print("Temperature: "); Serial.print(temperature); Serial.print(" C, ");
+    //Serial.print("Pressure: "); Serial.print(pressure); Serial.print(" hPa, ");
+    //Serial.print("Altitude: "); Serial.print(baroAlt); Serial.println(" m");
     
     if (ekf->statesInitialised) {
         ekf->baroHgt = baroAlt;
@@ -329,6 +397,15 @@ void outputState() {
     
 }
 
+void outputTimings() {
+    Serial.print("IMU Execution Time: "); Serial.print(imuExecutionTime); Serial.print(" us, Max: "); Serial.println(maxImuTime);
+    Serial.print("GPS Execution Time: "); Serial.print(gpsExecutionTime); Serial.print(" us, Max: "); Serial.println(maxGpsTime);
+    Serial.print("Magnetometer Execution Time: "); Serial.print(magExecutionTime); Serial.print(" us, Max: "); Serial.println(maxMagTime);
+    Serial.print("Barometer Execution Time: "); Serial.print(baroExecutionTime); Serial.print(" us, Max: "); Serial.println(maxBaroTime);
+    totalExecutionTime = imuExecutionTime + gpsExecutionTime + magExecutionTime + baroExecutionTime;
+    Serial.print("Total Execution Time: "); Serial.print(totalExecutionTime); Serial.println(" us");
+}
+
 void loop() {
     uint32_t currentTime = millis();
     
@@ -358,6 +435,7 @@ void loop() {
     
     // Output current state
     outputState();
+    outputTimings();
 }
 
 
