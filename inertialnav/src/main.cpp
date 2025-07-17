@@ -50,7 +50,6 @@ uint32_t maxBaroTime = 0;
 
 void setup() {
     Serial.begin(115200);
-    while (!Serial) delay(10);
 
     SPI.begin();
     SPI.setClockDivider(SPI_CLOCK_DIV128);
@@ -69,8 +68,7 @@ void setup() {
     SPI.setClockDivider(SPI_CLOCK_DIV64);
     
     if (!display.begin()) {
-        Serial.println("Display initialization failed!");
-        while (1) delay(1000);
+        Serial.println("Display initialization failed?");
     }
 
     display.showStartupMessage("Inertial Navigation System");
