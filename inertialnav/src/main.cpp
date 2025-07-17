@@ -6,6 +6,7 @@
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #include <utility/imumaths.h>
 #include "estimator_22states.h"
+#include "display.h"
 
 // IMU
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
@@ -15,6 +16,9 @@ MS5611 ms5611(0x77);
 SFE_UBLOX_GNSS myGNSS;
 // Global EKF instance
 AttPosEKF* ekf;
+
+// Display
+NavDisplay display;
 
 // Timing variables
 uint32_t lastIMUTime = 0;
@@ -47,6 +51,30 @@ uint32_t maxBaroTime = 0;
 void setup() {
     Serial.begin(115200);
     while (!Serial) delay(10);
+
+    SPI.begin();
+    SPI.setClockDivider(SPI_CLOCK_DIV128);
+
+    pinMode(10, OUTPUT); // CS
+    pinMode(9, OUTPUT);  // DC
+    pinMode(8, OUTPUT);  // RST
+    
+    // Reset sequence
+    digitalWrite(8, LOW);
+    delay(10);
+    digitalWrite(8, HIGH);
+    delay(10);
+    
+    SPI.begin();
+    SPI.setClockDivider(SPI_CLOCK_DIV64);
+    
+    if (!display.begin()) {
+        Serial.println("Display initialization failed!");
+        while (1) delay(1000);
+    }
+
+    display.showStartupMessage("Inertial Navigation System");
+    display.showStartupMessage("Initializing sensors...");
     
     // Create EKF instance
     ekf = new AttPosEKF();
@@ -436,6 +464,9 @@ void loop() {
     // Output current state
     outputState();
     outputTimings();
+
+    display.update(ekf, gpsRefSet, imuExecutionTime, gpsExecutionTime, 
+                  magExecutionTime, baroExecutionTime, totalExecutionTime);
 }
 
 
